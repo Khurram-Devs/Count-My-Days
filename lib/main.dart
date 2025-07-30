@@ -42,6 +42,7 @@ class _HomePageState extends State<HomePage> {
   ViewMode _viewMode = ViewMode.daily;
   bool _isAutoMode = true;
   bool _notificationsEnabled = false;
+  bool _fitToScreen = true;
   final Set<int> _manuallyCheckedDays = {};
 
   @override
@@ -52,19 +53,18 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      final birthdateMillis = prefs.getInt('birthdate');
-      if (birthdateMillis != null) {
-        _birthdate = DateTime.fromMillisecondsSinceEpoch(birthdateMillis);
-      }
-      _lifespanYears = prefs.getInt('lifespanYears') ?? 70;
-      _viewMode = ViewMode.values[prefs.getInt('viewMode') ?? 0];
-      _isAutoMode = prefs.getBool('isAutoMode') ?? true;
-      _notificationsEnabled = prefs.getBool('notificationsEnabled') ?? false;
-
-      final checkedDays = prefs.getStringList('manuallyCheckedDays') ?? [];
-      _manuallyCheckedDays.addAll(checkedDays.map((e) => int.parse(e)));
-    });
+    final birthdateMillis = prefs.getInt('birthdate');
+    if (birthdateMillis != null) {
+      _birthdate = DateTime.fromMillisecondsSinceEpoch(birthdateMillis);
+    }
+    _lifespanYears = prefs.getInt('lifespanYears') ?? 70;
+    _viewMode = ViewMode.values[prefs.getInt('viewMode') ?? 0];
+    _isAutoMode = prefs.getBool('isAutoMode') ?? true;
+    _notificationsEnabled = prefs.getBool('notificationsEnabled') ?? false;
+    _fitToScreen = prefs.getBool('fitToScreen') ?? true;
+    final checkedDays = prefs.getStringList('manuallyCheckedDays') ?? [];
+    _manuallyCheckedDays.addAll(checkedDays.map((e) => int.parse(e)));
+    if (mounted) setState(() {});
   }
 
   Future<void> _savePreferences() async {
@@ -76,6 +76,7 @@ class _HomePageState extends State<HomePage> {
     await prefs.setInt('viewMode', _viewMode.index);
     await prefs.setBool('isAutoMode', _isAutoMode);
     await prefs.setBool('notificationsEnabled', _notificationsEnabled);
+    await prefs.setBool('fitToScreen', _fitToScreen);
     await prefs.setStringList('manuallyCheckedDays',
         _manuallyCheckedDays.map((e) => e.toString()).toList());
   }
@@ -98,14 +99,10 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  int _getDaysLived() {
-    if (_birthdate == null) return 0;
-    return DateTime.now().difference(_birthdate!).inDays;
-  }
+  int _getDaysLived() =>
+      _birthdate == null ? 0 : DateTime.now().difference(_birthdate!).inDays;
 
-  int _getTotalDays() {
-    return _lifespanYears * 365;
-  }
+  int _getTotalDays() => _lifespanYears * 365;
 
   int _getUnitsCount() {
     switch (_viewMode) {
@@ -121,7 +118,6 @@ class _HomePageState extends State<HomePage> {
   int _getUnitsLived() {
     if (_birthdate == null) return 0;
     final daysLived = _getDaysLived();
-
     switch (_viewMode) {
       case ViewMode.daily:
         return daysLived;
@@ -142,7 +138,7 @@ class _HomePageState extends State<HomePage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
-            onPressed: () => _showSettings(),
+            onPressed: _showSettings,
           ),
         ],
       ),
@@ -157,15 +153,11 @@ class _HomePageState extends State<HomePage> {
         children: [
           const Icon(Icons.calendar_today, size: 80, color: Colors.blue),
           const SizedBox(height: 20),
-          const Text(
-            'Welcome to Count My Days',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
+          const Text('Welcome to Count My Days',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
-          const Text(
-            'Track your life journey, one day at a time',
-            style: TextStyle(fontSize: 16, color: Colors.grey),
-          ),
+          const Text('Track your life journey, one day at a time',
+              style: TextStyle(fontSize: 16, color: Colors.grey)),
           const SizedBox(height: 40),
           ElevatedButton.icon(
             onPressed: _selectBirthdate,
@@ -191,9 +183,43 @@ class _HomePageState extends State<HomePage> {
         _buildStatisticsCard(
             daysLived, daysRemaining, totalDays, progressPercent.toDouble()),
         Expanded(
-          child: _buildLifespanGridWithPainter(),
+          child: _fitToScreen
+              ? _buildLifespanGridWithPainter()
+              : _buildScrollableLifespanGrid(),
         ),
       ],
+    );
+  }
+
+  Widget _buildScrollableLifespanGrid() {
+    final totalUnits = _getUnitsCount();
+    final livedUnits = _getUnitsLived();
+    const spacing = 5.0;
+    const fixedCellSize = 8.0;
+
+    final estimatedCols =
+        (MediaQuery.of(context).size.width / (fixedCellSize + spacing)).floor();
+    final estimatedRows = (totalUnits / estimatedCols).ceil();
+
+    final actualWidth = estimatedCols * (fixedCellSize + spacing);
+    final actualHeight = estimatedRows * (fixedCellSize + spacing);
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.vertical,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: CustomPaint(
+          size: Size(actualWidth, actualHeight),
+          painter: LifeGridPainter(
+            units: totalUnits,
+            lived: livedUnits,
+            manual: _manuallyCheckedDays,
+            auto: _isAutoMode,
+            cellSize: fixedCellSize,
+            spacing: spacing,
+          ),
+        ),
+      ),
     );
   }
 
@@ -236,18 +262,10 @@ class _HomePageState extends State<HomePage> {
   Widget _buildStatItem(String label, String value, Color color) {
     return Column(
       children: [
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
-        ),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: Colors.grey),
-        ),
+        Text(value,
+            style: TextStyle(
+                fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
       ],
     );
   }
@@ -261,7 +279,6 @@ class _HomePageState extends State<HomePage> {
 
     final availableWidth = screenSize.width - padding;
     final availableHeight = screenSize.height - 300;
-
     final aspectRatio = availableWidth / availableHeight;
     final estimatedCols = sqrt(totalUnits * aspectRatio).floor();
     final estimatedRows = (totalUnits / estimatedCols).ceil();
@@ -275,18 +292,15 @@ class _HomePageState extends State<HomePage> {
     final actualWidth = estimatedCols * (cellSize + spacing);
     final actualHeight = estimatedRows * (cellSize + spacing);
 
-    return Padding(
-      padding: const EdgeInsets.all(padding / 2),
-      child: CustomPaint(
-        size: Size(actualWidth, actualHeight),
-        painter: LifeGridPainter(
-          units: totalUnits,
-          lived: livedUnits,
-          manual: _manuallyCheckedDays,
-          auto: _isAutoMode,
-          cellSize: cellSize,
-          spacing: spacing,
-        ),
+    return CustomPaint(
+      size: Size(actualWidth, actualHeight),
+      painter: LifeGridPainter(
+        units: totalUnits,
+        lived: livedUnits,
+        manual: _manuallyCheckedDays,
+        auto: _isAutoMode,
+        cellSize: cellSize,
+        spacing: spacing,
       ),
     );
   }
@@ -298,96 +312,110 @@ class _HomePageState extends State<HomePage> {
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => Container(
           padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Settings',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 20),
-              ListTile(
-                leading: const Icon(Icons.cake),
-                title: const Text('Birthdate'),
-                subtitle: Text(_birthdate != null
-                    ? DateFormat('MMM dd, yyyy').format(_birthdate!)
-                    : 'Not set'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _selectBirthdate();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.timeline),
-                title: const Text('Lifespan (years)'),
-                subtitle: Text('$_lifespanYears years'),
-                trailing: SizedBox(
-                  width: 100,
-                  child: TextField(
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 10),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Settings',
+                    style:
+                        TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 20),
+                ListTile(
+                  leading: const Icon(Icons.cake),
+                  title: const Text('Birthdate'),
+                  subtitle: Text(_birthdate != null
+                      ? DateFormat('MMM dd, yyyy').format(_birthdate!)
+                      : 'Not set'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _selectBirthdate();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.timeline),
+                  title: const Text('Lifespan (years)'),
+                  subtitle: Text('$_lifespanYears years'),
+                  trailing: SizedBox(
+                    width: 100,
+                    child: TextField(
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 10),
+                      ),
+                      controller: TextEditingController(
+                          text: _lifespanYears.toString()),
+                      onChanged: (value) {
+                        final years = int.tryParse(value);
+                        if (years != null && years > 0 && years <= 150) {
+                          setModalState(() => _lifespanYears = years);
+                          setState(() => _lifespanYears = years);
+                          _savePreferences();
+                        }
+                      },
                     ),
-                    controller:
-                        TextEditingController(text: _lifespanYears.toString()),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.view_module),
+                  title: const Text('Grid View'),
+                  subtitle: Text(_viewMode.toString().split('.').last),
+                  trailing: DropdownButton<ViewMode>(
+                    value: _viewMode,
                     onChanged: (value) {
-                      final years = int.tryParse(value);
-                      if (years != null && years > 0 && years <= 150) {
-                        setModalState(() => _lifespanYears = years);
-                        setState(() => _lifespanYears = years);
+                      if (value != null) {
+                        setModalState(() => _viewMode = value);
+                        setState(() => _viewMode = value);
                         _savePreferences();
                       }
                     },
+                    items: ViewMode.values.map((mode) {
+                      return DropdownMenuItem(
+                        value: mode,
+                        child: Text(mode.toString().split('.').last),
+                      );
+                    }).toList(),
                   ),
                 ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.view_module),
-                title: const Text('Grid View'),
-                subtitle: Text(_viewMode.toString().split('.').last),
-                trailing: DropdownButton<ViewMode>(
-                  value: _viewMode,
+                SwitchListTile(
+                  secondary: const Icon(Icons.fullscreen),
+                  title: const Text('Fit grid to screen'),
+                  subtitle: const Text('Shrink grid to fit or allow scroll'),
+                  value: _fitToScreen,
                   onChanged: (value) {
-                    if (value != null) {
-                      setModalState(() => _viewMode = value);
-                      setState(() => _viewMode = value);
-                      _savePreferences();
-                    }
+                    setModalState(() => _fitToScreen = value);
+                    setState(() => _fitToScreen = value);
+                    _savePreferences();
                   },
-                  items: ViewMode.values.map((mode) {
-                    return DropdownMenuItem(
-                      value: mode,
-                      child: Text(mode.toString().split('.').last),
-                    );
-                  }).toList(),
                 ),
-              ),
-              SwitchListTile(
-                secondary: const Icon(Icons.auto_mode),
-                title: const Text('Automatic Mode'),
-                subtitle: const Text('Days auto-filled based on current date'),
-                value: _isAutoMode,
-                onChanged: (value) {
-                  setModalState(() => _isAutoMode = value);
-                  setState(() => _isAutoMode = value);
-                  _savePreferences();
-                },
-              ),
-              SwitchListTile(
-                secondary: const Icon(Icons.notifications),
-                title: const Text('Daily Reminders'),
-                subtitle: const Text('Get notified about your daily progress'),
-                value: _notificationsEnabled,
-                onChanged: (value) {
-                  setModalState(() => _notificationsEnabled = value);
-                  setState(() => _notificationsEnabled = value);
-                  _savePreferences();
-                },
-              ),
-              const SizedBox(height: 20),
-            ],
+                SwitchListTile(
+                  secondary: const Icon(Icons.auto_mode),
+                  title: const Text('Automatic Mode'),
+                  subtitle:
+                      const Text('Days auto-filled based on current date'),
+                  value: _isAutoMode,
+                  onChanged: (value) {
+                    setModalState(() => _isAutoMode = value);
+                    setState(() => _isAutoMode = value);
+                    _savePreferences();
+                  },
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.notifications),
+                  title: const Text('Daily Reminders'),
+                  subtitle:
+                      const Text('Get notified about your daily progress'),
+                  value: _notificationsEnabled,
+                  onChanged: (value) {
+                    setModalState(() => _notificationsEnabled = value);
+                    setState(() => _notificationsEnabled = value);
+                    _savePreferences();
+                  },
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
         ),
       ),
@@ -421,23 +449,16 @@ class LifeGridPainter extends CustomPainter {
     for (int i = 0; i < units; i++) {
       final row = i ~/ cols;
       final col = i % cols;
-
       final dx = col * (cellSize + spacing);
       final dy = row * (cellSize + spacing);
-
       final isPast = i < lived;
       final isChecked = auto ? isPast : manual.contains(i);
-
       paint.color = isChecked
           ? Colors.green
           : isPast
               ? Colors.grey.shade300
               : Colors.grey.shade100;
-
-      canvas.drawRect(
-        Rect.fromLTWH(dx, dy, cellSize, cellSize),
-        paint,
-      );
+      canvas.drawRect(Rect.fromLTWH(dx, dy, cellSize, cellSize), paint);
     }
   }
 
